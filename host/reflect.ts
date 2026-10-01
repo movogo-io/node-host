@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises'
+import { access, readdir, readFile } from 'node:fs/promises'
 import { createRequire, findPackageJSON } from 'node:module'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -100,13 +100,7 @@ export async function reflect(path: string): Promise<Reflection> {
     ])
     const files = allFiles.filter(file => extname(file) === '.ts' && !file.endsWith('.d.ts'))
     const serviceUrl = `${pathToFileURL(absolutePath).href}/`
-    // A service still on the upstream host must reflect under the forked deploy, so the fork
-    // falls back to the upstream package until the fleet-wide pin has landed everywhere.
-    const myPackageJson =
-        packageJson.name === '@movogo-io/host'
-            ? join(absolutePath, 'package.json')
-            : (findInstalledPackageJSON('@movogo-io/host', serviceUrl) ??
-              findInstalledPackageJSON('@riddance/host', serviceUrl))
+    const myPackageJson = await hostPackageJsonOf(packageJson, absolutePath, serviceUrl)
     if (!myPackageJson) {
         throw new Error('Packages not installed')
     }
@@ -202,9 +196,65 @@ async function reflectEmits(serviceUrl: string): Promise<Reflection['emits']> {
         )
 }
 
+// The host whose registry the entry files populated. A service on `@riddance/service` registers
+// into the `@riddance/host` that package resolves, and a `@movogo-io/host` reachable further up
+// the directory tree (the deploy tool's own, for a fixture inside its checkout) is a second,
+// empty registry; so the host is resolved from the service package the service declares, and
+// only then by name, the service's own node_modules before the walk.
+const hostOfServicePackage = new Map([
+    ['@movogo-io/service', '@movogo-io/host'],
+    ['@riddance/service', '@riddance/host'],
+])
+
+async function hostPackageJsonOf(
+    packageJson: { name: string; dependencies?: { [name: string]: string } },
+    absolutePath: string,
+    serviceUrl: string,
+) {
+    if (packageJson.name === '@movogo-io/host') {
+        return join(absolutePath, 'package.json')
+    }
+    const servicePackage = Object.keys(packageJson.dependencies ?? {}).find(name =>
+        hostOfServicePackage.has(name),
+    )
+    const host = servicePackage && hostOfServicePackage.get(servicePackage)
+    if (servicePackage && host) {
+        const serviceJson = findInstalledPackageJSON(servicePackage, serviceUrl)
+        if (serviceJson) {
+            const fromService = findInstalledPackageJSON(
+                host,
+                `${pathToFileURL(dirname(serviceJson)).href}/`,
+            )
+            if (fromService) {
+                return fromService
+            }
+        }
+    }
+    for (const name of ['@movogo-io/host', '@riddance/host']) {
+        const own = join(absolutePath, 'node_modules', name, 'package.json')
+        if (await exists(own)) {
+            return own
+        }
+    }
+    return (
+        findInstalledPackageJSON('@movogo-io/host', serviceUrl) ??
+        findInstalledPackageJSON('@riddance/host', serviceUrl)
+    )
+}
+
+async function exists(path: string) {
+    try {
+        await access(path)
+        return true
+    } catch {
+        return false
+    }
+}
+
 async function readConfig(path: string) {
     const packageJson = JSON.parse(await readFile(join(path, 'package.json'), 'utf-8')) as {
         name: string
+        dependencies?: { [name: string]: string }
         engines?: { [engine: string]: string }
         cpu?: CpuConfig[]
         os?: OSConfig[]

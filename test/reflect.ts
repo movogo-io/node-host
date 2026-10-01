@@ -6,6 +6,8 @@ import { reflect } from '../host/reflect.js'
 const plain = 'test/data/reflect-plain'
 const filtered = 'test/data/reflect-filtered'
 const linked = 'test/data/reflect-linked'
+const upstream = 'test/data/reflect-upstream'
+const decoy = 'test/data/node_modules/@movogo-io/host'
 
 describe('reflection', () => {
     before(async () => {
@@ -15,6 +17,8 @@ describe('reflection', () => {
             installHost(linked),
             installContractStub(join(filtered, 'node_modules/@movogo-io/contract')),
             installLinkedContractStub(linked),
+            installUpstreamHost(upstream),
+            copyHost(decoy),
         ])
     })
 
@@ -77,6 +81,25 @@ describe('reflection', () => {
         })
     })
 
+    it('reflects through the host the service package resolves, not one further up the tree', async () => {
+        const { revision: _revision, ...reflection } = await reflect(upstream)
+
+        assert.deepStrictEqual(reflection, {
+            name: 'reflect-upstream',
+            events: [
+                {
+                    name: 'hello',
+                    topic: 'status',
+                    type: 'greeting',
+                    config: { cpus: undefined, os: undefined, nodeVersion: '>=24' },
+                },
+            ],
+            http: [],
+            timers: [],
+            emits: [],
+        })
+    })
+
     it('reads the emits through a linked contract package', async () => {
         const { revision: _revision, ...reflection } = await reflect(linked)
 
@@ -110,13 +133,47 @@ describe('reflection', () => {
 // twin reflect imports, and a copy of the built host so the fixture resolves @movogo-io/host
 // to a registry instance of its own (a symlink would share the root registry across fixtures).
 async function installHost(fixture: string) {
-    const target = join(fixture, 'node_modules/@movogo-io/host')
-    await mkdir(target, { recursive: true })
-    const entries = (await readdir(fixture)).filter(f => extname(f) === '.ts')
     await Promise.all([
-        ...entries.map(f => copyFile(join(fixture, f), join(fixture, basename(f, '.ts') + '.js'))),
+        compileEntries(fixture),
+        copyHost(join(fixture, 'node_modules/@movogo-io/host')),
+    ])
+}
+
+async function compileEntries(fixture: string) {
+    const entries = (await readdir(fixture)).filter(f => extname(f) === '.ts')
+    await Promise.all(
+        entries.map(f => copyFile(join(fixture, f), join(fixture, basename(f, '.ts') + '.js'))),
+    )
+}
+
+async function copyHost(target: string) {
+    await mkdir(target, { recursive: true })
+    await Promise.all([
         ...['package.json', 'event.js', 'context.js'].map(f => copyFile(f, join(target, f))),
         cp('host', join(target, 'host'), { recursive: true, filter: f => !f.endsWith('.ts') }),
+    ])
+}
+
+// A service still on the upstream names: its entry files import `@riddance/service/event`, a
+// stub that re-exports the `@riddance/host` beside it, so its handlers register there. The decoy
+// `@movogo-io/host` two directories up is what a walk from the fixture finds first.
+async function installUpstreamHost(fixture: string) {
+    const service = join(fixture, 'node_modules/@riddance/service')
+    await Promise.all([
+        compileEntries(fixture),
+        copyHost(join(fixture, 'node_modules/@riddance/host')),
+        mkdir(service, { recursive: true }),
+    ])
+    await Promise.all([
+        writeFile(
+            join(service, 'package.json'),
+            JSON.stringify({
+                name: '@riddance/service',
+                type: 'module',
+                exports: { './event': './event.js' },
+            }),
+        ),
+        writeFile(join(service, 'event.js'), "export * from '@riddance/host/lib/event'\n"),
     ])
 }
 
