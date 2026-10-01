@@ -1,0 +1,8 @@
+{
+  "name": "reflect-plain",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=24"
+  }
+}

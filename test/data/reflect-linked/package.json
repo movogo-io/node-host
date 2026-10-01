@@ -1,0 +1,8 @@
+{
+  "name": "reflect-linked",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=24"
+  }
+}

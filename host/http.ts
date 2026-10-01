@@ -1,4 +1,4 @@
-import { hash } from 'node:crypto'
+import { hash, randomUUID } from 'node:crypto'
 import { isIP } from 'node:net'
 import { brotliCompress } from 'node:zlib'
 import { Context, measure } from '../context.js'
@@ -37,16 +37,16 @@ export async function executeRequest(
     const isShallow =
         context.env.SHALLOW_KEY && options.headers?.['x-shallow'] === context.env.SHALLOW_KEY
     const includeBodyInLogs = !handler.config?.excludeBodyFromLogs
-    const logRequest = includeBodyInLogs
-        ? { method: handler.method, ...options }
-        : withoutRequestBody({ method: handler.method, ...options })
+    const loggedOptions = {
+        method: handler.method,
+        ...options,
+        headers: redactedHeaders(options.headers),
+    }
+    const logRequest = includeBodyInLogs ? loggedOptions : withoutRequestBody(loggedOptions)
     let enrichedLog = log.enrichReserved({ meta: context.meta, request: logRequest })
     if (isShallow) {
         enrichedLog.trace('Shallow request')
-        return {
-            headers: {},
-            status: 204,
-        }
+        return withRequestId({ headers: {}, status: 204 }, context.operationId)
     }
     enrichedLog.trace('Request BEGIN')
     try {
@@ -118,7 +118,10 @@ export async function executeRequest(
             handler.entry({ ...context, log: enrichedLog }, req),
         )
 
-        const response = resultToResponse(result, includeBodyInLogs)
+        const response = withRequestId(
+            resultToResponse(result, includeBodyInLogs),
+            context.operationId,
+        )
 
         if (context.signal.aborted) {
             response.headers = {
@@ -143,16 +146,13 @@ export async function executeRequest(
         return await compressed(req.headers, eTagged(req.headers, response))
     } catch (e) {
         try {
-            const response = errorToResponse(e)
+            const response = withRequestId(errorToResponse(e), context.operationId)
             enrichedLog = enrichedLog.enrichReserved({ response })
             enrichedLog.error('Request END', e)
             return response
         } catch (convertError) {
             enrichedLog.error('Could not convert exception to error response.', convertError)
-            return {
-                headers: {},
-                status: 500,
-            }
+            return withRequestId({ headers: {}, status: 500 }, context.operationId)
         }
     }
 }
@@ -206,6 +206,38 @@ function resultToResponse(result: Result, withLogBody: boolean): Response & { lo
         body: JSON.stringify(result.body),
         logBody,
     }
+}
+
+// Every response echoes the operation id the logs carry, so a client can quote it; a value
+// the handler set would break that join, so the minted id wins.
+function withRequestId<T extends Response>(response: T, operationId: string | undefined): T {
+    if (!operationId) {
+        return response
+    }
+    response.headers = {
+        ...response.headers,
+        'x-request-id': operationId,
+    }
+    return response
+}
+
+const redactedHeaderNames = new Set(['authorization', 'api-key', 'x-shallow'])
+
+function redactedHeaders(headers: { readonly [key: string]: string } | undefined) {
+    if (!headers) {
+        return undefined
+    }
+    return Object.fromEntries(
+        Object.entries(headers).map(([name, value]) => [
+            name,
+            isRedactedHeader(name) ? '[redacted]' : value,
+        ]),
+    )
+}
+
+function isRedactedHeader(name: string) {
+    const lowerCase = name.toLowerCase()
+    return redactedHeaderNames.has(lowerCase) || lowerCase.startsWith('x-on-behalf-of-')
 }
 
 function withoutRequestBody(options: RequestOptions & { method: string }) {
@@ -266,14 +298,21 @@ function errorToResponse(e: unknown): Response {
     }
 }
 
+/**
+Mints the operation id for every request: a client's own request id is kept apart as
+`clientRequestId`, so it can be joined on in logs but never names our work. The
+`x-on-behalf-of-*` headers are not read here; a route accepts them explicitly or not at all.
+*/
 export function clientFromHeaders(
     headers: { readonly [key: string]: string | undefined } | undefined,
 ): ClientInfo {
+    const operationId = randomUUID()
     if (!headers) {
-        return {}
+        return { operationId }
     }
     return {
-        operationId: headers['x-request-id'] ?? headers['request-id'],
+        operationId,
+        clientRequestId: boundedClientRequestId(headers['x-request-id'] ?? headers['request-id']),
         clientId:
             headers['x-client-id'] ??
             headers['x-installation-id'] ??
@@ -282,6 +321,15 @@ export function clientFromHeaders(
         ...clientAddress(headers),
         userAgent: headers['x-forwarded-for-user-agent'] ?? headers['user-agent'],
     }
+}
+
+const clientRequestIdPattern = /^[\u{20}-\u{7E}]{1,128}$/u
+
+function boundedClientRequestId(value: string | undefined) {
+    if (value === undefined || !clientRequestIdPattern.test(value)) {
+        return undefined
+    }
+    return value
 }
 
 function clientAddress(headers: { readonly [key: string]: string | undefined }) {

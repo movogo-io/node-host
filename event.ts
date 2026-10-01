@@ -13,6 +13,13 @@ export type Handler = (
     messageId: string,
 ) => Promise<void> | void
 
+/**
+Registers the handler for events of `topic` and `event`.
+
+With `config.filter`, only events whose attributes carry every named attribute with a value
+strictly equal to one of the listed exact values are delivered. Filters for announcements
+come from the contract package's helpers, never spelled by hand.
+*/
 export function on(topic: string, event: string, fn: Handler): void
 export function on(topic: string, event: string, config: HandlerConfiguration, fn: Handler): void
 export function on(

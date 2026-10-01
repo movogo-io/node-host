@@ -1,4 +1,5 @@
 import { Context, HandlerConfiguration, type Json } from './context.js'
+import { claim } from './host/attribution.js'
 import { registerHttpHandler } from './host/http-registry.js'
 
 export * from './context.js'
@@ -207,6 +208,49 @@ export type HttpHandlerConfiguration = HandlerConfiguration & {
 }
 
 export type Handler = (context: Context, request: HttpRequest) => Promise<Result> | Result
+
+/**
+Accepts the attribution a sibling service forwarded in `x-on-behalf-of-user-id` and
+`x-on-behalf-of-org`, so the work done here is carried on in its name.
+
+Call it only after the api-key check has passed, never on a bearer route: a bearer route's
+`getBearer` sets the claim from the verified token and answers 400 to these headers. Nothing
+else reads them, so a route that does not call this ignores a forged header.
+
+A no-op when the user id header is absent or the same claim is already set. Throws when a
+different claim is already set: that is a defect in the calling code, not a client error.
+*/
+export function acceptForwardedAttribution(
+    context: Pick<Context, 'attribution'>,
+    request: { headers: { readonly [key: string]: string | undefined } },
+): void {
+    const userId = header(request.headers, 'x-on-behalf-of-user-id')
+    if (userId === undefined) {
+        return
+    }
+    const org = header(request.headers, 'x-on-behalf-of-org')
+    const current = context.attribution.onBehalfOf
+    if (current === undefined) {
+        context.attribution.onBehalfOf = claim(userId, org)
+        return
+    }
+    if (current.userId === userId && current.org === org) {
+        return
+    }
+    throw new Error(
+        'Refusing to overwrite the attribution set from the bearer with a forwarded one.',
+    )
+}
+
+// API Gateway's HTTP payload lower-cases header names; its REST payload and the test mock keep
+// them as sent, so the lookup is case-insensitive, as the request log's redaction is.
+function header(headers: { readonly [key: string]: string | undefined }, name: string) {
+    const value = Object.entries(headers).find(([key]) => key.toLowerCase() === name)?.[1]
+    if (value === undefined || value.length === 0) {
+        return undefined
+    }
+    return value
+}
 
 type Path<T> = T extends `/${string}` ? 'Error: path cannot start with slash.' : T
 

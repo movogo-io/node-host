@@ -1,4 +1,5 @@
 import { type Handler as EventFunction, type HandlerConfiguration } from '../event.js'
+import { validateEventFilter } from './attributes.js'
 import { combineConfig, getMetadata, type FullConfiguration, type Metadata } from './meta.js'
 import { addHandler } from './registry.js'
 
@@ -32,6 +33,11 @@ function eventHost(
     type: string,
     entry: EventFunction,
 ) {
+    // A bad filter fails here, at import time in tests and at reflection in the deploy,
+    // never as a subscription SNS refuses after the function is already live.
+    if (cfg?.filter !== undefined) {
+        validateEventFilter(cfg.filter)
+    }
     addHandler('event', {
         meta,
         config: combineConfig(meta?.config, cfg),

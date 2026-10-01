@@ -1,0 +1,8 @@
+{
+  "name": "reflect-filtered",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=24"
+  }
+}

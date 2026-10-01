@@ -1,5 +1,5 @@
 import { readdir, readFile } from 'node:fs/promises'
-import { findPackageJSON } from 'node:module'
+import { createRequire, findPackageJSON } from 'node:module'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { HandlerConfiguration } from '../context.js'
@@ -50,6 +50,15 @@ export type Reflection = {
         type: string
         config: HandlerConfiguration & PackageJsonConfiguration
     }[]
+    /**
+    What the service declares it emits (the contract package's `declareEmit`), for the deploy
+    to create and grant. `prefixEnv` names the environment variable whose value prefixes the topic.
+    */
+    emits: {
+        topic: string
+        type: string
+        prefixEnv?: string
+    }[]
 }
 
 export function resolveCpu(config: PackageJsonConfiguration, supported: CPU[]): CPU {
@@ -90,10 +99,14 @@ export async function reflect(path: string): Promise<Reflection> {
         getHash(absolutePath),
     ])
     const files = allFiles.filter(file => extname(file) === '.ts' && !file.endsWith('.d.ts'))
+    const serviceUrl = `${pathToFileURL(absolutePath).href}/`
+    // A service still on the upstream host must reflect under the forked deploy, so the fork
+    // falls back to the upstream package until the fleet-wide pin has landed everywhere.
     const myPackageJson =
-        packageJson.name === '@riddance/host'
+        packageJson.name === '@movogo-io/host'
             ? join(absolutePath, 'package.json')
-            : findPackageJSON('@riddance/host', `${pathToFileURL(absolutePath).href}/`)
+            : (findInstalledPackageJSON('@movogo-io/host', serviceUrl) ??
+              findInstalledPackageJSON('@riddance/host', serviceUrl))
     if (!myPackageJson) {
         throw new Error('Packages not installed')
     }
@@ -114,6 +127,8 @@ export async function reflect(path: string): Promise<Reflection> {
         setMeta(packageJson.name, base, revision, packageJson.config)
         await import(pathToFileURL(join(absolutePath, base + '.js')).toString())
     }
+    // After the entry files: only declarations their import graph reached are registered.
+    const emits = await reflectEmits(serviceUrl)
 
     return {
         name: packageJson.name,
@@ -150,7 +165,41 @@ export async function reflect(path: string): Promise<Reflection> {
             topic: h.topic,
             type: h.type,
         })),
+        emits,
     }
+}
+
+type DeclaredEmit = { topic: string; event: string; prefixEnv?: string }
+
+/**
+Reads the emits the service's contract package declares. The contract package has no runtime
+import of the host, so the host reads it instead, resolving `@movogo-io/contract/schema` from the
+service directory the way the entry files' own import did: through the package's `exports` and
+through any symlink of a `file:` or linked install to the real path, so the module instance is the
+one they populated. A service without the contract package, or with one that predates
+`declaredEmits`, declares nothing; a contract package that is installed but does not resolve the
+export is a broken install, and the resolver's error says which path or export is missing.
+*/
+async function reflectEmits(serviceUrl: string): Promise<Reflection['emits']> {
+    if (!findInstalledPackageJSON('@movogo-io/contract', serviceUrl)) {
+        return []
+    }
+    // The CommonJS resolver, since import.meta.resolve takes no parent URL without a flag. Its
+    // conditions differ from the ESM loader's only for a package that exports `import` and
+    // `require` targets apart, which the contract package never does: every export of
+    // node-platform is `{ types, default }`.
+    const schemaPath = createRequire(serviceUrl).resolve('@movogo-io/contract/schema')
+    const schema = (await import(pathToFileURL(schemaPath).toString())) as {
+        declaredEmits?: () => DeclaredEmit[]
+    }
+    if (typeof schema.declaredEmits !== 'function') {
+        return []
+    }
+    return schema
+        .declaredEmits()
+        .map(({ topic, event, prefixEnv }) =>
+            prefixEnv === undefined ? { topic, type: event } : { topic, type: event, prefixEnv },
+        )
 }
 
 async function readConfig(path: string) {
@@ -162,4 +211,17 @@ async function readConfig(path: string) {
         config?: object
     }
     return packageJson
+}
+
+// findPackageJSON throws ERR_MODULE_NOT_FOUND for a bare specifier that is not installed,
+// rather than returning undefined as it does for an unresolvable path.
+function findInstalledPackageJSON(packageName: string, base: string) {
+    try {
+        return findPackageJSON(packageName, base)
+    } catch (e) {
+        if ((e as { code?: unknown } | undefined)?.code === 'ERR_MODULE_NOT_FOUND') {
+            return undefined
+        }
+        throw e
+    }
 }

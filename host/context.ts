@@ -1,4 +1,13 @@
-import { Context, Environment, Json, Logger, type JsonSafeObject } from '../context.js'
+import {
+    Context,
+    Environment,
+    Json,
+    Logger,
+    type Attribution,
+    type EventAttributes,
+    type JsonSafeObject,
+} from '../context.js'
+import { validateEventAttributes, validateEventSubject } from './attributes.js'
 import { makeLogger } from './logging.js'
 import type { FullConfiguration, Metadata } from './meta.js'
 
@@ -8,6 +17,10 @@ export type ClientInfo = {
     readonly clientIp?: string
     readonly clientPort?: number
     readonly userAgent?: string
+    /**
+    The request id the client sent (bounded, printable ASCII), never the operation id.
+    */
+    readonly clientRequestId?: string
 }
 
 export type EventTransport = {
@@ -18,8 +31,15 @@ export type EventTransport = {
         data: JsonSafeObject | undefined,
         messageId: string | undefined,
         signal: AbortSignal,
+        extras?: { attributes?: EventAttributes; attribution?: Attribution },
     ): Promise<void>
 }
+
+/**
+Marks the context's emit function as one that accepts attributes. The same function object
+sits on every spread copy of the context, so the marker survives `{ ...context }`.
+*/
+export const emitAttributesMarker: unique symbol = Symbol.for('movogo.emit.attributes')
 
 export type LogLevel = 'trace' | 'debug' | 'info' | 'warning' | 'error' | 'fatal'
 
@@ -72,6 +92,7 @@ export function createContext(
     meta?: Metadata,
     environment?: Partial<Environment>,
     now?: () => Date,
+    attribution?: Attribution,
 ): {
     log: RootLogger
     context: Omit<Context, 'log'>
@@ -97,11 +118,37 @@ export function createContext(
             ip: clientInfo.clientIp,
             port: clientInfo.clientPort,
             userAgent: clientInfo.userAgent,
+            requestId: clientInfo.clientRequestId,
         },
     })
     // eslint-disable-next-line unicorn/no-top-level-assignment-in-function
     globalLogger = logger
     const successHandlers: (() => Promise<void> | void)[] = []
+    const holder: Attribution = attribution ?? {}
+    // Async so a refused subject or attribute rejects, as every other failed emit does.
+    const emit = async (
+        topic: string,
+        type: string,
+        subject: string,
+        data?: {
+            readonly [key: string]: Json
+        },
+        messageId?: string,
+        attributes?: EventAttributes,
+    ) => {
+        validateEventSubject(subject)
+        validateEventAttributes(attributes)
+        await eventTransport.sendEvent(
+            topic,
+            type,
+            subject,
+            data,
+            messageId,
+            outerController.signal,
+            { attributes, attribution: holder },
+        )
+    }
+    Object.defineProperty(emit, emitAttributesMarker, { value: true })
     const ctx = {
         env: (environment ?? process.env) as Environment,
         signal: innerController.signal,
@@ -112,7 +159,9 @@ export function createContext(
             ip: clientInfo.clientIp,
             port: clientInfo.clientPort,
             userAgent: clientInfo.userAgent,
+            requestId: clientInfo.clientRequestId,
         },
+        attribution: holder,
         meta: meta
             ? {
                   packageName: meta.packageName,
@@ -120,16 +169,7 @@ export function createContext(
                   revision: meta.revision,
               }
             : undefined,
-        emit: (
-            topic: string,
-            type: string,
-            subject: string,
-            data?: {
-                readonly [key: string]: Json
-            },
-            messageId?: string,
-        ) =>
-            eventTransport.sendEvent(topic, type, subject, data, messageId, outerController.signal),
+        emit,
         onSuccess: (fn: () => Promise<void> | void) => {
             successHandlers.push(fn)
         },

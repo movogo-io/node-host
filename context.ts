@@ -33,6 +33,40 @@ export type JsonSafe =
 
 export type JsonSafeObject = { readonly [key: string]: JsonSafe }
 
+/**
+Attributes an emitter puts beside an event, for consumers to filter on. Exact strings only;
+at most four, names matching `^[a-z][A-Za-z0-9]{0,63}$` and not reserved (see `host/attributes.ts`).
+*/
+export type EventAttributes = { readonly [name: string]: string }
+
+/**
+A handler's filter: every named attribute must be present on the event with a value strictly
+equal to one of the listed values. Exact string values only.
+*/
+export type EventFilter = { readonly [attribute: string]: readonly [string, ...string[]] }
+
+declare const attributionClaim: unique symbol
+
+/**
+Whom the current work is done on behalf of: opaque ids only, from a verified bearer or an
+explicitly accepted forward. Branded with a declared symbol, so a hand-written literal is
+refused where a claim is expected and a claim is never assignable where a caller is. The only
+constructor is `claim()` in the host's internal `host/attribution.ts`, deliberately outside this
+facade: service code never mints one. The symbol is a type-level fiction; the runtime object is
+`{ userId, org? }`.
+*/
+export type AttributionClaim = {
+    readonly userId: string
+    readonly org?: string
+    readonly [attributionClaim]: true
+}
+
+/**
+One mutable holder per invocation, shared by every copy of the context, carrying the claim
+to outgoing requests and emitted events. Never consulted for authorization.
+*/
+export type Attribution = { onBehalfOf?: AttributionClaim }
+
 export type HandlerConfiguration = {
     /**
     An indication of CPU usage of the handler. If undefined, a generic conservative value will be used.
@@ -56,6 +90,12 @@ export type HandlerConfiguration = {
     The number of seconds the function is expected to finish executing in.
     */
     readonly timeout?: number
+    /**
+    For event handlers: only events carrying every named attribute with a value strictly equal
+    to one of the listed values are delivered. Exact string values only; the sanctioned source
+    for announcements is the contract package's helpers.
+    */
+    readonly filter?: EventFilter
 }
 
 export type Context = {
@@ -70,7 +110,12 @@ export type Context = {
         readonly ip?: string
         readonly port?: number
         readonly userAgent?: string
+        /**
+        The request id the client sent, kept apart from the minted `operationId`.
+        */
+        readonly requestId?: string
     }
+    readonly attribution: Attribution
     readonly meta?: {
         readonly packageName: string
         readonly fileName: string
@@ -83,6 +128,7 @@ export type Context = {
         subject: string,
         data?: Json,
         messageId?: string,
+        attributes?: EventAttributes,
     ): Promise<void>
 
     onSuccess(fn: () => Promise<void> | void): void
@@ -92,12 +138,19 @@ export function httpRequestHeaders({
     meta,
     operationId,
     client,
-}: Pick<Context, 'meta' | 'operationId' | 'client'>) {
+    attribution,
+}: Pick<Context, 'meta' | 'operationId' | 'client'> & Partial<Pick<Context, 'attribution'>>) {
     const headers: { [key: string]: string } = {
         'user-agent': `${meta?.packageName ?? '?'}/${meta?.revision ?? '?'}`,
     }
     if (operationId) {
         headers['x-request-id'] = operationId
+    }
+    if (attribution?.onBehalfOf) {
+        headers['x-on-behalf-of-user-id'] = attribution.onBehalfOf.userId
+        if (attribution.onBehalfOf.org) {
+            headers['x-on-behalf-of-org'] = attribution.onBehalfOf.org
+        }
     }
     if (client) {
         if (client.id) {

@@ -14,10 +14,13 @@ export function combineConfig(
     if (base === undefined) {
         return override
     }
+    // A filter belongs to one handler's subscription. The shallow spread below would hand a
+    // package-level filter to every event handler that sets none, silently narrowing them all.
+    const { filter: _packageFilter, ...packageConfig } = base
     if (override === undefined) {
-        return base
+        return packageConfig
     }
-    return { ...base, ...override }
+    return { ...packageConfig, ...override }
 }
 
 let metadata: Metadata | undefined

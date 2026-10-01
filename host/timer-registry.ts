@@ -38,6 +38,9 @@ function timerHost(
     schedule: CronExpression,
     entry: TimerFunction,
 ) {
+    if (cfg?.filter !== undefined) {
+        throw new Error('A filter applies to event handlers only, not to a timer handler.')
+    }
     addHandler('timer', {
         meta,
         config: combineConfig(meta?.config, cfg),

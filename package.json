@@ -1,6 +1,6 @@
 {
-  "name": "@riddance/host",
-  "version": "0.3.1",
+  "name": "@movogo-io/host",
+  "version": "0.4.0",
   "type": "module",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
@@ -46,7 +46,9 @@
     "./timer": "./host/timer.js",
     "./timer-registry": "./host/timer-registry.js",
     "./event": "./host/event.js",
-    "./event-registry": "./host/event-registry.js"
+    "./event-registry": "./host/event-registry.js",
+    "./attributes": "./host/attributes.js",
+    "./attribution": "./host/attribution.js"
   },
   "scripts": {
     "start": "riddance-watch",
