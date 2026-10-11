@@ -6,6 +6,7 @@ import {
     type LogTransport,
 } from '../host/context.js'
 import { clientFromHeaders, executeRequest } from '../host/http.js'
+import type { FullConfiguration } from '../host/meta.js'
 import {
     acceptForwardedAttribution,
     httpRequestHeaders,
@@ -13,6 +14,7 @@ import {
     type Context,
     type EventAttributes,
     type Handler,
+    type Json,
     type JsonSafeObject,
 } from '../http.js'
 
@@ -118,6 +120,42 @@ describe('http', () => {
                 assert.deepStrictEqual(withoutUndefined(client), withoutUndefined(expected))
             })
         }
+    })
+
+    describe('request body', () => {
+        it('hands a json body to the handler as an object', async () => {
+            const { response } = await executeHandler(
+                (_context, request) => ({ body: { seen: typeof request.body } }),
+                undefined,
+                {},
+                { json: { event: 'created', id: 7 } },
+            )
+            assert.deepStrictEqual(JSON.parse(response.body as string), { seen: 'object' })
+        })
+
+        it('hands a raw-body handler the serialized json, as production hands it the string', async () => {
+            const { response } = await executeHandler(
+                (_context, request) => ({ body: { seen: request.body } }),
+                undefined,
+                {},
+                { config: { rawBody: true }, json: { event: 'created', id: 7 } },
+            )
+            assert.deepStrictEqual(JSON.parse(response.body as string), {
+                seen: '{"event":"created","id":7}',
+            })
+        })
+
+        it('hands a raw-body handler a string body unchanged', async () => {
+            const { response } = await executeHandler(
+                (_context, request) => ({ body: { seen: request.body } }),
+                undefined,
+                {},
+                { config: { rawBody: true }, body: '{"event": "created",  "id": 7}' },
+            )
+            assert.deepStrictEqual(JSON.parse(response.body as string), {
+                seen: '{"event": "created",  "id": 7}',
+            })
+        })
     })
 
     it('handles text response', async () => {
@@ -470,6 +508,7 @@ async function executeHandler(
     handler: Handler,
     headers?: { [key: string]: string },
     env: { [key: string]: string } = {},
+    options: { config?: FullConfiguration; body?: string; json?: Json } = {},
 ) {
     const logTransport = new TestTransport()
     const eventTransport = new TestEventTransport()
@@ -489,7 +528,7 @@ async function executeHandler(
         context,
         {
             meta: undefined,
-            config: undefined,
+            config: options.config,
             method: 'GET',
             pathPattern: '/',
             entry: handler,
@@ -497,6 +536,8 @@ async function executeHandler(
         {
             uri: '',
             headers,
+            ...(options.body !== undefined && { body: options.body }),
+            ...(options.json !== undefined && { json: options.json }),
         },
         success,
     )

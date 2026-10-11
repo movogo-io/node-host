@@ -110,7 +110,7 @@ export async function executeRequest(
                 }
                 return parsedUrl
             },
-            body: requestBody(options),
+            body: requestBody(options, handler.config?.rawBody ?? false),
             headers: options.headers ?? {},
         }
 
@@ -252,9 +252,11 @@ function withoutRequestBody(options: RequestOptions & { method: string }) {
     return options
 }
 
-function requestBody(options: RequestOptions): Json | string | undefined {
+// The in-process test runner hands a `json` option where API Gateway hands a string, so a
+// raw-body handler is given the serialized form on both paths and sees one shape.
+function requestBody(options: RequestOptions, rawBody: boolean): Json | string | undefined {
     if ('json' in options) {
-        return options.json
+        return rawBody ? JSON.stringify(options.json) : options.json
     }
     if ('body' in options) {
         return options.body

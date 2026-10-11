@@ -91,6 +91,14 @@ export type HandlerConfiguration = {
     */
     readonly timeout?: number
     /**
+    For HTTP handlers: the body reaches the handler as the string the client sent, unparsed,
+    so a signature computed over it (a webhook's HMAC) can be verified against those bytes.
+    `request.body` is then `string | undefined`. Read at runtime by the host, so it lives
+    here beside `excludeBodyFromLogs`, not on the http-only configuration.
+    @default false
+    */
+    readonly rawBody?: boolean
+    /**
     For event handlers: only events carrying every named attribute with a value strictly equal
     to one of the listed values are delivered. Exact string values only; the sanctioned source
     for announcements is the contract package's helpers.
