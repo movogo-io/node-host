@@ -1,7 +1,7 @@
 import { hash, randomUUID } from 'node:crypto'
 import { isIP } from 'node:net'
 import { brotliCompress } from 'node:zlib'
-import { Context, measure } from '../context.js'
+import { Context, etagOf, measure } from '../context.js'
 import type { Json, ParsedUrl, ResponseHeaders, Result } from '../http.js'
 import { ClientInfo, RootLogger } from './context.js'
 import type { HttpHandler } from './http-registry.js'
@@ -414,7 +414,7 @@ function eTagged(
     if (response.headers.etag || !response.body) {
         return response
     }
-    const etag = hash('sha1', response.body, 'base64').slice(0, -1)
+    const etag = etagOf(hash('sha1', response.body, 'base64').slice(0, -1))
     response.headers.etag = etag
     if (requestHeaders['if-none-match'] === etag) {
         response.status = 304

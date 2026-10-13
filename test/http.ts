@@ -169,7 +169,7 @@ describe('http', () => {
             headers: {
                 'content-type': 'text/plain',
                 // spell-checker: ignore Igudy LRMQE
-                etag: 'ts/27mdLU5IgudyELJkBNcLRMQE',
+                etag: '"ts/27mdLU5IgudyELJkBNcLRMQE"',
                 'x-request-id': operationId,
             },
             body: 'response body',
@@ -186,7 +186,7 @@ describe('http', () => {
             status: 200,
             headers: {
                 'content-type': 'application/json',
-                etag: 'ZwAoZBg/P7JfAVoj+eS6P814iKk',
+                etag: '"ZwAoZBg/P7JfAVoj+eS6P814iKk"',
                 'x-request-id': operationId,
             },
             body: '{"message":"response body"}',
@@ -272,7 +272,7 @@ describe('http', () => {
             status: 304,
             headers: {
                 'content-type': 'application/json',
-                etag: 'ZwAoZBg/P7JfAVoj+eS6P814iKk',
+                etag: '"ZwAoZBg/P7JfAVoj+eS6P814iKk"',
                 'x-request-id': operationId,
             },
         })
@@ -294,7 +294,7 @@ describe('http', () => {
             headers: {
                 'content-type': 'application/json',
                 // spell-checker: ignore Ashk
-                etag: 'Va6G6GT8Ashk7WoEvX3TvNwV+Fs',
+                etag: '"Va6G6GT8Ashk7WoEvX3TvNwV+Fs"',
                 'x-request-id': changed.operationId,
             },
             body: '{"message":"new response body"}',

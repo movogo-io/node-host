@@ -142,6 +142,13 @@ export type Context = {
     onSuccess(fn: () => Promise<void> | void): void
 }
 
+// The strong entity tag of a revision: the revision in double quotes, as an
+// ETag answers it and an If-Match or If-None-Match sends it back (RFC 9110).
+// A bare revision in If-Match never matches, so every writer quotes here.
+export function etagOf(revision: string): string {
+    return `"${revision}"`
+}
+
 export function httpRequestHeaders({
     meta,
     operationId,

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import {
+    etagOf,
     httpRequestHeaders,
     type Attribution,
     type EventAttributes,
@@ -12,6 +13,12 @@ import {
     type LogEntry,
     type LogTransport,
 } from '../host/context.js'
+
+describe('etagOf', () => {
+    it('quotes a revision as a strong entity tag', () => {
+        assert.equal(etagOf('3f2a'), '"3f2a"')
+    })
+})
 
 describe('context', () => {
     describe('emit', () => {
