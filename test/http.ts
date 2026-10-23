@@ -316,7 +316,54 @@ describe('http', () => {
             },
         )
         assert.deepStrictEqual(response.headers['content-encoding'], 'br')
+        assert.deepStrictEqual(response.headers.vary, 'accept-encoding')
         assert.ok((response.body?.length ?? NaN) < 10_000)
+    })
+
+    it('does not vary a response too small to compress', async () => {
+        const { response } = await executeHandler(
+            () => {
+                return { body: { message: 'hello' } }
+            },
+            {
+                'accept-encoding': 'gzip, deflate, br, zstd',
+            },
+        )
+        assert.deepStrictEqual(response.headers.vary, undefined)
+    })
+
+    it('adds accept-encoding to the vary of a large response', async () => {
+        const { response } = await executeHandler(
+            () => {
+                return {
+                    headers: { vary: 'authorization' },
+                    body: {
+                        message: Array.from({ length: 100_000 }, _ => 'hello'),
+                    },
+                }
+            },
+            {
+                'accept-encoding': 'gzip',
+            },
+        )
+        assert.deepStrictEqual(response.headers.vary, 'authorization, accept-encoding')
+    })
+
+    it('leaves a vary that already names accept-encoding', async () => {
+        const { response } = await executeHandler(
+            () => {
+                return {
+                    headers: { vary: 'Accept-Encoding, authorization' },
+                    body: {
+                        message: Array.from({ length: 100_000 }, _ => 'hello'),
+                    },
+                }
+            },
+            {
+                'accept-encoding': 'gzip',
+            },
+        )
+        assert.deepStrictEqual(response.headers.vary, 'Accept-Encoding, authorization')
     })
 
     it('leaves a large response plain for a client that accepts neither br nor gzip', async () => {
@@ -333,6 +380,7 @@ describe('http', () => {
             },
         )
         assert.deepStrictEqual(response.headers['content-encoding'], undefined)
+        assert.deepStrictEqual(response.headers.vary, 'accept-encoding')
         assert.deepStrictEqual(
             response.body,
             JSON.stringify({ message: Array.from({ length: 100_000 }, _ => 'hello') }),

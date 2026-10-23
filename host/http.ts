@@ -430,6 +430,7 @@ async function compressed(
     if (!response.body || response.body.length < 32_768 || response.headers['content-encoding']) {
         return response
     }
+    response.headers.vary = varyingOnEncoding(response.headers.vary)
     const encoding = encodingFor(requestHeaders['accept-encoding'])
     if (!encoding) {
         return response
@@ -442,6 +443,19 @@ async function compressed(
         },
         body: await compress(encoding, response.body),
     }
+}
+
+// Every response large enough to compress varies on Accept-Encoding, the plain one
+// included, or a shared cache could serve a br body to a client that cannot decode it.
+function varyingOnEncoding(vary: string | undefined) {
+    if (!vary) {
+        return 'accept-encoding'
+    }
+    const names = new Set(vary.split(',').map(name => name.trim().toLowerCase()))
+    if (names.has('*') || names.has('accept-encoding')) {
+        return vary
+    }
+    return `${vary}, accept-encoding`
 }
 
 function encodingFor(acceptEncoding: string | undefined) {
