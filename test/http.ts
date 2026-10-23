@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { brotliDecompressSync, gunzipSync } from 'node:zlib'
 import {
     createContext,
     type EventTransport,
@@ -316,6 +317,93 @@ describe('http', () => {
         )
         assert.deepStrictEqual(response.headers['content-encoding'], 'br')
         assert.ok((response.body?.length ?? NaN) < 10_000)
+    })
+
+    it('leaves a large response plain for a client that accepts neither br nor gzip', async () => {
+        const { response } = await executeHandler(
+            () => {
+                return {
+                    body: {
+                        message: Array.from({ length: 100_000 }, _ => 'hello'),
+                    },
+                }
+            },
+            {
+                'accept-encoding': 'deflate',
+            },
+        )
+        assert.deepStrictEqual(response.headers['content-encoding'], undefined)
+        assert.deepStrictEqual(
+            response.body,
+            JSON.stringify({ message: Array.from({ length: 100_000 }, _ => 'hello') }),
+        )
+    })
+
+    it('compresses a large response to what it encodes', async () => {
+        const { response } = await executeHandler(
+            () => {
+                return {
+                    body: {
+                        message: Array.from({ length: 100_000 }, (_, i) => `hello ${i}`),
+                    },
+                }
+            },
+            {
+                'accept-encoding': 'gzip, deflate, br, zstd',
+            },
+        )
+        assert.ok(Buffer.isBuffer(response.body))
+        assert.deepStrictEqual(
+            brotliDecompressSync(response.body).toString(),
+            JSON.stringify({ message: Array.from({ length: 100_000 }, (_, i) => `hello ${i}`) }),
+        )
+    })
+
+    it('compresses large responses with gzip for a client without br', async () => {
+        const { response } = await executeHandler(
+            () => {
+                return {
+                    body: {
+                        message: Array.from({ length: 100_000 }, (_, i) => `hello ${i}`),
+                    },
+                }
+            },
+            {
+                'accept-encoding': 'gzip, deflate',
+            },
+        )
+        assert.deepStrictEqual(response.headers['content-encoding'], 'gzip')
+        assert.ok(Buffer.isBuffer(response.body))
+        assert.deepStrictEqual(
+            gunzipSync(response.body).toString(),
+            JSON.stringify({ message: Array.from({ length: 100_000 }, (_, i) => `hello ${i}`) }),
+        )
+    })
+
+    it('tags a compressed response with the tag of its plain body', async () => {
+        const plain = await executeHandler(() => {
+            return { body: { message: Array.from({ length: 100_000 }, (_, i) => `hello ${i}`) } }
+        })
+        const brotli = await executeHandler(
+            () => {
+                return {
+                    body: { message: Array.from({ length: 100_000 }, (_, i) => `hello ${i}`) },
+                }
+            },
+            { 'accept-encoding': 'br' },
+        )
+        const gzipped = await executeHandler(
+            () => {
+                return {
+                    body: { message: Array.from({ length: 100_000 }, (_, i) => `hello ${i}`) },
+                }
+            },
+            { 'accept-encoding': 'gzip' },
+        )
+        assert.deepStrictEqual(
+            [brotli.response.headers.etag, gzipped.response.headers.etag],
+            [plain.response.headers.etag, plain.response.headers.etag],
+        )
     })
 
     it('redacts credentials and on-behalf-of headers from the request log', async () => {

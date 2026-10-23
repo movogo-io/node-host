@@ -1,6 +1,6 @@
 import { hash, randomUUID } from 'node:crypto'
 import { isIP } from 'node:net'
-import { brotliCompress } from 'node:zlib'
+import { brotliCompress, constants, gzip } from 'node:zlib'
 import { Context, etagOf, measure } from '../context.js'
 import type { Json, ParsedUrl, ResponseHeaders, Result } from '../http.js'
 import { ClientInfo, RootLogger } from './context.js'
@@ -430,28 +430,52 @@ async function compressed(
     if (!response.body || response.body.length < 32_768 || response.headers['content-encoding']) {
         return response
     }
-    const encodings = requestHeaders['accept-encoding']?.split(',').map(e => e.trim())
-    if (!encodings?.includes('br')) {
+    const encoding = encodingFor(requestHeaders['accept-encoding'])
+    if (!encoding) {
         return response
     }
     return {
         status: response.status,
         headers: {
-            'content-encoding': 'br',
+            'content-encoding': encoding,
             ...response.headers,
         },
-        body: await compress(response.body),
+        body: await compress(encoding, response.body),
     }
 }
 
-function compress(body: string | Buffer) {
+function encodingFor(acceptEncoding: string | undefined) {
+    const encodings = acceptEncoding?.split(',').map(e => e.trim())
+    if (encodings?.includes('br')) {
+        return 'br'
+    }
+    if (encodings?.includes('gzip')) {
+        return 'gzip'
+    }
+    return undefined
+}
+
+// zlib's default quality, 11, took 5 s on a 6.6 MB page of rentals on a laptop,
+// several times that on a Lambda, where quality 4 took 17 ms for a third more bytes.
+const brotliQuality = 4
+
+function compress(encoding: 'br' | 'gzip', body: string | Buffer) {
     return new Promise<Buffer>((resolve, reject) => {
-        brotliCompress(body, {}, (error, result) => {
+        const done = (error: Error | null, result: Buffer) => {
             if (error) {
                 reject(error)
                 return
             }
             resolve(result)
-        })
+        }
+        if (encoding === 'br') {
+            brotliCompress(
+                body,
+                { params: { [constants.BROTLI_PARAM_QUALITY]: brotliQuality } },
+                done,
+            )
+            return
+        }
+        gzip(body, done)
     })
 }
