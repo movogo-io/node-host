@@ -1,11 +1,11 @@
-import { type Handler as EventFunction, type HandlerConfiguration } from '../event.js'
+import { type EventHandlerConfiguration, type Handler as EventFunction } from '../event.js'
 import { validateEventFilter } from './attributes.js'
 import { combineConfig, getMetadata, type FullConfiguration, type Metadata } from './meta.js'
 import { addHandler } from './registry.js'
 
 export type EventHandler = {
     meta: Metadata | undefined
-    config: FullConfiguration | undefined
+    config: (FullConfiguration & EventHandlerConfiguration) | undefined
     topic: string
     type: string
     entry: EventFunction
@@ -13,7 +13,7 @@ export type EventHandler = {
 
 type EventHost = (
     meta: Metadata | undefined,
-    config: HandlerConfiguration | undefined,
+    config: EventHandlerConfiguration | undefined,
     topic: string,
     type: string,
     handler: EventFunction,
@@ -28,7 +28,7 @@ function setEventHost(host: EventHost) {
 
 function eventHost(
     meta: Metadata | undefined,
-    cfg: HandlerConfiguration | undefined,
+    cfg: EventHandlerConfiguration | undefined,
     topic: string,
     type: string,
     entry: EventFunction,
@@ -37,6 +37,14 @@ function eventHost(
     // never as a subscription SNS refuses after the function is already live.
     if (cfg?.filter !== undefined) {
         validateEventFilter(cfg.filter)
+    }
+    if (
+        cfg?.concurrencyMax !== undefined &&
+        (!Number.isSafeInteger(cfg.concurrencyMax) || cfg.concurrencyMax < 1)
+    ) {
+        throw new Error(
+            `concurrencyMax must be a positive integer, not ${String(cfg.concurrencyMax)}.`,
+        )
     }
     addHandler('event', {
         meta,
@@ -53,7 +61,7 @@ setEventHost(eventHost)
 export function registerEventHandler(
     topic: string,
     type: string,
-    configOrHandler: HandlerConfiguration | EventFunction,
+    configOrHandler: EventHandlerConfiguration | EventFunction,
     fn?: EventFunction,
 ): void {
     if (typeof configOrHandler === 'function') {

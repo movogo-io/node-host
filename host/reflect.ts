@@ -2,7 +2,7 @@ import { access, readdir, readFile } from 'node:fs/promises'
 import { createRequire, findPackageJSON } from 'node:module'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import type { HandlerConfiguration } from '../context.js'
+import type { EventHandlerConfiguration } from '../event.js'
 import type { HttpHandlerConfiguration } from '../http.js'
 import type { TimerHandlerConfiguration } from '../timer.js'
 import { getHash } from './git.js'
@@ -48,7 +48,7 @@ export type Reflection = {
         name: string
         topic: string
         type: string
-        config: HandlerConfiguration & PackageJsonConfiguration
+        config: EventHandlerConfiguration & PackageJsonConfiguration
     }[]
     /**
     What the service declares it emits (the contract package's `declareEmit`), for the deploy

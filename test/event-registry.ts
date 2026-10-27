@@ -106,6 +106,37 @@ describe('event handler filters', () => {
     })
 })
 
+describe('event handler concurrency', () => {
+    it('refuses a cap that is no positive integer', () => {
+        const registered = getHandlers('event').length
+        assert.throws(() => {
+            on('view', 'reconcile-due', { concurrencyMax: 0 }, () => undefined)
+        }, /concurrencyMax must be a positive integer, not 0\./u)
+        assert.throws(() => {
+            on('view', 'reconcile-due', { concurrencyMax: 2.5 }, () => undefined)
+        }, /concurrencyMax must be a positive integer, not 2\.5\./u)
+        assert.deepStrictEqual(getHandlers('event').slice(registered), [])
+    })
+
+    it('registers the cap with the handler, for the deploy to reserve', () => {
+        const registered = getHandlers('event').length
+        on('view', 'reconcile-due', { timeout: 900, concurrencyMax: 25 }, () => undefined)
+
+        assert.deepStrictEqual(
+            getHandlers('event')
+                .slice(registered)
+                .map(h => ({ topic: h.topic, type: h.type, config: h.config })),
+            [
+                {
+                    topic: 'view',
+                    type: 'reconcile-due',
+                    config: { timeout: 900, concurrencyMax: 25 },
+                },
+            ],
+        )
+    })
+})
+
 function values(count: number): [string, ...string[]] {
     return ['v0', ...Array.from({ length: count - 1 }, (_, i) => `v${i + 1}`)]
 }
