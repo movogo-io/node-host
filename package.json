@@ -1,6 +1,6 @@
 {
   "name": "@movogo-io/host",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "type": "module",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
