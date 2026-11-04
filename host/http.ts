@@ -4,7 +4,7 @@ import { brotliCompress, constants, gzip } from 'node:zlib'
 import { Context, etagOf, measure } from '../context.js'
 import type { Json, ParsedUrl, ResponseHeaders, Result } from '../http.js'
 import { ClientInfo, RootLogger } from './context.js'
-import type { HttpHandler } from './http-registry.js'
+import type { HttpHandler, Method } from './http-registry.js'
 
 export type Response = {
     headers: { readonly [key: string]: string }
@@ -118,9 +118,9 @@ export async function executeRequest(
             handler.entry({ ...context, log: enrichedLog }, req),
         )
 
-        const response = withRequestId(
-            resultToResponse(result, includeBodyInLogs),
-            context.operationId,
+        const response = uncachedUnlessRead(
+            handler.method,
+            withRequestId(resultToResponse(result, includeBodyInLogs), context.operationId),
         )
 
         if (context.signal.aborted) {
@@ -146,7 +146,10 @@ export async function executeRequest(
         return await compressed(req.headers, eTagged(req.headers, response))
     } catch (e) {
         try {
-            const response = withRequestId(errorToResponse(e), context.operationId)
+            const response = uncachedUnlessRead(
+                handler.method,
+                withRequestId(errorToResponse(e), context.operationId),
+            )
             enrichedLog = enrichedLog.enrichReserved({ response })
             enrichedLog.error('Request END', e)
             return response
@@ -219,6 +222,19 @@ function withRequestId<T extends Response>(response: T, operationId: string | un
         'x-request-id': operationId,
     }
     return response
+}
+
+// A client cache keys what it stores on the URL alone, not the method: iOS kept a PATCH answer
+// and served it to the next GET of that URL, once the GET revalidated to a 304.
+function uncachedUnlessRead<T extends Response>(method: Method, response: T): T {
+    if (method === 'GET' || hasCacheControl(response.headers)) {
+        return response
+    }
+    return { ...response, headers: { ...response.headers, 'cache-control': 'no-store' } }
+}
+
+function hasCacheControl(headers: { readonly [key: string]: string }) {
+    return Object.keys(headers).some(name => name.toLowerCase() === 'cache-control')
 }
 
 const redactedHeaderNames = new Set(['authorization', 'api-key', 'x-shallow'])

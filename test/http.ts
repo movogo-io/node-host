@@ -7,6 +7,7 @@ import {
     type LogTransport,
 } from '../host/context.js'
 import { clientFromHeaders, executeRequest } from '../host/http.js'
+import type { Method } from '../host/http-registry.js'
 import type { FullConfiguration } from '../host/meta.js'
 import {
     acceptForwardedAttribution,
@@ -249,6 +250,116 @@ describe('http', () => {
             entries.map(e => e.message),
             ['Shallow request'],
         )
+    })
+
+    it('forbids storing the answer to a mutation', async () => {
+        const { response, operationId } = await executeHandler(
+            () => {
+                return { body: { message: 'response body' } }
+            },
+            undefined,
+            {},
+            { method: 'PATCH' },
+        )
+        assert.deepStrictEqual(response, {
+            status: 200,
+            headers: {
+                'content-type': 'application/json',
+                'cache-control': 'no-store',
+                etag: '"ZwAoZBg/P7JfAVoj+eS6P814iKk"',
+                'x-request-id': operationId,
+            },
+            body: '{"message":"response body"}',
+        })
+    })
+
+    it('forbids storing the answer to every mutating method', async () => {
+        const methods: Method[] = ['POST', 'PUT', 'PATCH', 'DELETE']
+        for (const method of methods) {
+            const { response } = await executeHandler(
+                () => {
+                    return { body: { message: 'response body' } }
+                },
+                undefined,
+                {},
+                { method },
+            )
+            assert.deepStrictEqual(response.headers['cache-control'], 'no-store', method)
+        }
+    })
+
+    it('forbids storing the refusal a mutation answers', async () => {
+        const { response, operationId } = await executeHandler(
+            () => {
+                throw Object.assign(new Error('conflict'), {
+                    statusCode: 409,
+                    body: { code: 'revision.conflict' },
+                })
+            },
+            undefined,
+            {},
+            { method: 'PUT' },
+        )
+        assert.deepStrictEqual(response, {
+            status: 409,
+            headers: {
+                'content-type': 'application/json',
+                'cache-control': 'no-store',
+                'x-request-id': operationId,
+            },
+            body: '{"code":"revision.conflict"}',
+        })
+    })
+
+    it('forbids storing the error a mutation answers', async () => {
+        const { response } = await executeHandler(
+            () => {
+                throw new Error('boom')
+            },
+            undefined,
+            {},
+            { method: 'PATCH' },
+        )
+        assert.deepStrictEqual(response.status, 500)
+        assert.deepStrictEqual(response.headers['cache-control'], 'no-store')
+    })
+
+    it('leaves the caching of a read to its handler', async () => {
+        const { response } = await executeHandler(() => {
+            return { body: { message: 'response body' } }
+        })
+        assert.deepStrictEqual(response.headers['cache-control'], undefined)
+    })
+
+    it('keeps the cache-control a mutation handler set', async () => {
+        const { response } = await executeHandler(
+            () => {
+                return {
+                    headers: { 'cache-control': 'private, max-age=60' },
+                    body: { message: 'response body' },
+                }
+            },
+            undefined,
+            {},
+            { method: 'POST' },
+        )
+        assert.deepStrictEqual(response.headers['cache-control'], 'private, max-age=60')
+    })
+
+    it('keeps a cache-control a mutation handler set in another case', async () => {
+        const { response } = await executeHandler(
+            () => {
+                return {
+                    headers: { 'Cache-Control': 'private, max-age=60' },
+                    body: { message: 'response body' },
+                }
+            },
+            undefined,
+            {},
+            { method: 'POST' },
+        )
+        assert.deepStrictEqual(response.headers['Cache-Control'], 'private, max-age=60')
+        assert.deepStrictEqual(response.headers['cache-control'], undefined)
     })
 
     it('handles etag caching', async () => {
@@ -644,7 +755,7 @@ async function executeHandler(
     handler: Handler,
     headers?: { [key: string]: string },
     env: { [key: string]: string } = {},
-    options: { config?: FullConfiguration; body?: string; json?: Json } = {},
+    options: { config?: FullConfiguration; body?: string; json?: Json; method?: Method } = {},
 ) {
     const logTransport = new TestTransport()
     const eventTransport = new TestEventTransport()
@@ -665,7 +776,7 @@ async function executeHandler(
         {
             meta: undefined,
             config: options.config,
-            method: 'GET',
+            method: options.method ?? 'GET',
             pathPattern: '/',
             entry: handler,
         },
