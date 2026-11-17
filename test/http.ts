@@ -577,6 +577,7 @@ describe('http', () => {
                 'x-shallow': 'secret',
                 'x-on-behalf-of-user-id': 'user-1',
                 'x-on-behalf-of-org': 'org-1',
+                cookie: '__Host-session=secret',
             },
         )
         assert.deepStrictEqual(
@@ -594,11 +595,73 @@ describe('http', () => {
                         'x-shallow': '[redacted]',
                         'x-on-behalf-of-user-id': '[redacted]',
                         'x-on-behalf-of-org': '[redacted]',
+                        cookie: '[redacted]',
                     },
                 },
             ],
         )
     })
+
+    it('redacts cookies and the query of a redirect from the response log only', async () => {
+        const { response, entries, operationId } = await executeHandler(() => ({
+            status: 302,
+            headers: {
+                'Set-Cookie': '__Host-session=secret; Path=/; Secure; HttpOnly',
+                Location: 'https://claude.ai/api/mcp/auth_callback?code=secret&state=s#f',
+            },
+        }))
+        assert.deepStrictEqual(
+            entries
+                .filter(e => e.message === 'Request END')
+                .map(e => JSON.parse(e.json)?.response.headers),
+            [
+                {
+                    'Set-Cookie': '[redacted]',
+                    Location: 'https://claude.ai/api/mcp/auth_callback',
+                    'x-request-id': operationId,
+                },
+            ],
+        )
+        assert.deepStrictEqual(
+            [response.headers['Set-Cookie'], response.headers.Location],
+            [
+                '__Host-session=secret; Path=/; Secure; HttpOnly',
+                'https://claude.ai/api/mcp/auth_callback?code=secret&state=s#f',
+            ],
+        )
+    })
+
+    for (const { location, logged } of [
+        { location: '/#frag', logged: '/' },
+        { location: '/cb?code=x', logged: '/cb' },
+        { location: '/cb', logged: '/cb' },
+    ]) {
+        it(`logs the redirect ${location} as ${logged}`, async () => {
+            const { response, entries, operationId } = await executeHandler(() => ({
+                status: 302,
+                headers: {
+                    'set-cookie': '__Host-session=secret; Path=/; Secure; HttpOnly',
+                    location,
+                },
+            }))
+            assert.deepStrictEqual(
+                entries
+                    .filter(e => e.message === 'Request END')
+                    .map(e => JSON.parse(e.json)?.response.headers),
+                [
+                    {
+                        'set-cookie': '[redacted]',
+                        location: logged,
+                        'x-request-id': operationId,
+                    },
+                ],
+            )
+            assert.deepStrictEqual(
+                [response.headers['set-cookie'], response.headers.location],
+                ['__Host-session=secret; Path=/; Secure; HttpOnly', location],
+            )
+        })
+    }
 
     describe('attribution', () => {
         it('accepts a forwarded claim once and refuses a different one', () => {

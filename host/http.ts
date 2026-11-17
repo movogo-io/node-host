@@ -133,7 +133,7 @@ export async function executeRequest(
         enrichedLog = enrichedLog.enrichReserved({
             response: {
                 status: response.status,
-                headers: response.headers,
+                headers: redactedHeaders(response.headers),
                 body: response.logBody,
             },
         })
@@ -237,18 +237,32 @@ function hasCacheControl(headers: { readonly [key: string]: string }) {
     return Object.keys(headers).some(name => name.toLowerCase() === 'cache-control')
 }
 
-const redactedHeaderNames = new Set(['authorization', 'api-key', 'x-shallow'])
+const redactedHeaderNames = new Set([
+    'authorization',
+    'api-key',
+    'x-shallow',
+    'cookie',
+    'set-cookie',
+])
 
 function redactedHeaders(headers: { readonly [key: string]: string } | undefined) {
     if (!headers) {
         return undefined
     }
     return Object.fromEntries(
-        Object.entries(headers).map(([name, value]) => [
-            name,
-            isRedactedHeader(name) ? '[redacted]' : value,
-        ]),
+        Object.entries(headers).map(([name, value]) => [name, loggedHeaderValue(name, value)]),
     )
+}
+
+// A redirect's query carries what the address bar must not leak either: an OAuth code, state.
+function loggedHeaderValue(name: string, value: string) {
+    if (isRedactedHeader(name)) {
+        return '[redacted]'
+    }
+    if (name.toLowerCase() === 'location') {
+        return value.replace(/[?#].*$/su, '')
+    }
+    return value
 }
 
 function isRedactedHeader(name: string) {
